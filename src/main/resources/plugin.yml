@@ -1,0 +1,112 @@
+name: Incog-Shop
+version: 1.8.0
+main: com.snipeyfresh.incogshop.IncogShopPlugin
+api-version: '26.2'
+author: SnipeyFresh
+load: POSTWORLD
+depend: [Vault]
+softdepend: [DiscordSRV]
+description: Dynamic player-supplied market with orders, physical shops, Auction House, and Discord price history.
+commands:
+  market:
+    description: Open the dynamic server market.
+    usage: /market [search|orders|buyorder|sellorder|myorders|cancelorder|claim]
+    aliases: [shop]
+  sell:
+    description: Open the bulk server-market selling GUI.
+    usage: /sell
+    permission: incogshop.sell
+  sellwand:
+    description: Receive a wand that bulk-sells a chest, barrel, or shulker box's contents.
+    usage: /sellwand
+    permission: incogshop.sellwand
+  ah:
+    description: Browse and manage the Auction House.
+    usage: /ah [sell|bid|buy|my|cancel|claim]
+    aliases: [auctionhouse, auction]
+    permission: incogshop.auction
+  pshop:
+    description: Create and manage physical player shops.
+    usage: /pshop <create|remove|price|item|info|list> ...
+    permission: incogshop.playershop
+  marketadmin:
+    description: Admin controls for Incog-Shop.
+    usage: /marketadmin <gui|layout|createcategory|deletecategory|setcategory|additem|mode|infinitestock|price|stock|money|reload|save> ...
+    permission: incogshop.admin
+permissions:
+  incogshop.market:
+    default: true
+  incogshop.sell:
+    default: true
+  incogshop.sellwand:
+    default: true
+  incogshop.orders:
+    default: true
+    children:
+      incogshop.orders.buy: true
+      incogshop.orders.sell: true
+  incogshop.orders.buy:
+    default: true
+  incogshop.orders.sell:
+    default: true
+  incogshop.orders.bypasslimit:
+    default: op
+  incogshop.orders.admin:
+    default: op
+  incogshop.playershop:
+    default: true
+  incogshop.playershop.create:
+    default: true
+  incogshop.playershop.remove:
+    default: true
+  incogshop.playershop.bypass:
+    default: op
+  incogshop.auction:
+    default: true
+    children:
+      incogshop.auction.sell: true
+      incogshop.auction.bid: true
+      incogshop.auction.buy: true
+  incogshop.auction.sell:
+    default: true
+  incogshop.auction.bid:
+    default: true
+  incogshop.auction.buy:
+    default: true
+  incogshop.auction.bypasslimit:
+    default: op
+  incogshop.auction.admin:
+    default: op
+  incogshop.admin:
+    description: Full Incog-Shop administration.
+    default: op
+    children:
+      incogshop.admin.gui: true
+      incogshop.admin.layout: true
+      incogshop.admin.category: true
+      incogshop.admin.item: true
+      incogshop.admin.price: true
+      incogshop.admin.stock: true
+      incogshop.admin.money: true
+      incogshop.admin.reload: true
+      incogshop.admin.save: true
+      incogshop.auction.admin: true
+      incogshop.orders.admin: true
+  incogshop.admin.gui:
+    default: op
+  incogshop.admin.layout:
+    default: op
+  incogshop.admin.category:
+    default: op
+  incogshop.admin.item:
+    default: op
+  incogshop.admin.price:
+    default: op
+  incogshop.admin.stock:
+    default: op
+  incogshop.admin.money:
+    default: op
+  incogshop.admin.reload:
+    default: op
+  incogshop.admin.save:
+    default: op

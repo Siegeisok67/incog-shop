@@ -1,0 +1,76 @@
+economy:
+  mode: VAULT
+  starting-balance: 500.0
+  currency-symbol: "$"
+  pay-minimum: 0.01
+
+market:
+  infinite-stock-enabled: false
+  initial-stock: 750
+  target-stock: 512
+  maximum-stock-per-material: 1000000
+  buy-sell-spread: 0.22
+  minimum-price-multiplier: 0.35
+  maximum-price-multiplier: 4.0
+  demand-impact-per-item: 0.0035
+  demand-decay-per-minute: 0.985
+  maximum-demand-pressure: 1.25
+  reject-custom-items: true
+  transaction-fee-percent: 2.0
+  excluded-materials: []
+
+player-shops:
+  enabled: true
+  creation-fee: 25.0
+  sales-tax-percent: 3.0
+  max-shops-per-player: 12
+  allowed-containers:
+    - CHEST
+    - TRAPPED_CHEST
+    - BARREL
+
+saving:
+  autosave-seconds: 60
+
+messages:
+  prefix: "&6[Incog-Shop]&r "
+
+auction-house:
+  enabled: true
+  listing-fee: 25.0
+  sales-tax-percent: 3.0
+  max-active-listings-per-player: 12
+  default-duration-hours: 24
+  maximum-duration-hours: 168
+  minimum-bid-increment: 1.0
+  minimum-bid-increment-percent: 5.0
+
+sell-gui:
+  enabled: true
+
+market-orders:
+  enabled: true
+  max-active-orders-per-player: 20
+  maximum-items-per-order: 100000
+  sales-tax-percent: 1.0
+  sell-price-min-multiplier: 0.5
+  sell-price-max-multiplier: 2.0
+
+sell-wand:
+  enabled: true
+  containers:
+    - CHEST
+    - TRAPPED_CHEST
+    - BARREL
+
+discord-price-check:
+  enabled: true
+  channel-id: "1535779632421544076"
+  command-prefix: "!"
+  history-resolution-minutes: 5
+  history-retention-days: 30
+  default-windows:
+    - "1h"
+    - "7h"
+    - "24h"
+    - "7d"
