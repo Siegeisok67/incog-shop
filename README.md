@@ -1,4 +1,4 @@
-# Incog-Shop 1.5.2
+# Incog-Shop
 
 Developer: **SnipeyFresh** (and partially Siegeisok67)
 
