@@ -35,11 +35,11 @@ Player shops, Auction House prices/bids, admin prices, and market orders accept 
 The physical chest/barrel inventory is the shop stock. Owners sneak-right-click to open/restock it with exact matching items.
 
 ## Build
-Build with your Java 26 + Gradle setup:
+We use a Maven setup, to build use:
 ```
-gradle clean build
+mvn clean package
 ```
-Output: `build/libs/Incog-Shop-1.5.0.jar`.
+Output: `target/Incog-Shop-x.x.x.jar`.
 
 
 ## Economy provider selection (1.5.1)
@@ -110,18 +110,6 @@ From the GUI, admins can:
 - Open the GUI Layout Editor and normal Admin Market from the same setup menu.
 
 Custom categories with one or more custom subcategories automatically show a subcategory-selection GUI to players.
-
-
-## Maven build
-
-This source package now uses Maven. From the project root, run:
-
-```bash
-mvn clean package
-```
-
-The compiled plugin is written to `target/Incog-Shop-1.8.1.jar`. See `MAVEN-BUILD.md` for Arch Linux setup notes.
-
 
 ## 1.8.1 GUI redesign
 
