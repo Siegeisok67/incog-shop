@@ -36,13 +36,6 @@ public final class OrderBookGui {
         lore.add("");
         lore.add(Text.color("&7Server instant buy: &f" + plugin.money(plugin.market().buyUnitPrice(material))));
         lore.add(Text.color("&7Server instant sell: &f" + plugin.money(plugin.market().sellUnitPrice(material))));
-        var entry = plugin.market().entry(material);
-        if (entry != null) {
-            lore.add(Text.color("&7Server Stock: &f" + entry.stock()));
-            double minMult = Math.max(0, plugin.getConfig().getDouble("market-orders.sell-price-min-multiplier", 0.5));
-            double maxMult = Math.max(minMult, plugin.getConfig().getDouble("market-orders.sell-price-max-multiplier", 2.0));
-            lore.add(Text.color("&7Sell Order price range: &f" + plugin.money(entry.basePrice() * minMult) + " - " + plugin.money(entry.basePrice() * maxMult)));
-        }
         meta.setLore(lore); center.setItemMeta(meta); inv.setItem(4, center);
 
         List<MarketOrder> buys = plugin.orders().buyOrders(material);

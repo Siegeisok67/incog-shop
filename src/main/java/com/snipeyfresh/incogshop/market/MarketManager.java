@@ -26,23 +26,8 @@ public final class MarketManager {
             "LIGHT", "DEBUG_STICK", "END_PORTAL_FRAME", "SPAWNER", "TRIAL_SPAWNER", "VAULT", "KNOWLEDGE_BOOK"
     );
 
-    // Netherite in every form (scrap, ingot, block, every tool, every armor piece) can never be
-    // bought - only sold. This is intentionally NOT the smithing template used to upgrade
-    // diamond gear, which is a crafting catalyst rather than netherite itself.
-    private static final Set<String> HARD_SELL_ONLY_MATERIALS = Set.of(
-            "NETHERITE_SCRAP", "NETHERITE_INGOT", "NETHERITE_BLOCK",
-            "NETHERITE_SWORD", "NETHERITE_PICKAXE", "NETHERITE_AXE", "NETHERITE_SHOVEL", "NETHERITE_HOE",
-            "NETHERITE_HELMET", "NETHERITE_CHESTPLATE", "NETHERITE_LEGGINGS", "NETHERITE_BOOTS"
-    );
-
-    /** Netherite (every form) and every shulker box color can be sold to the market, but never bought from it. */
-    public static boolean isHardSellOnly(Material material) {
-        return material.name().endsWith("SHULKER_BOX") || HARD_SELL_ONLY_MATERIALS.contains(material.name());
-    }
-
     private final IncogShopPlugin plugin;
     private final File file;
-    private final File itemsFile;
     private final File auditFile;
     private final Map<Material, MarketEntry> entries = new EnumMap<>(Material.class);
     private final EnumMap<Material, MarketMode> modes = new EnumMap<>(Material.class);
@@ -50,11 +35,41 @@ public final class MarketManager {
     private final Map<Material, MarketSubcategory> subcategoryOverrides = new EnumMap<>(Material.class);
     private List<Material> tradable = List.of();
     private boolean stockBootstrapApplied;
+    private long lastRestockAt;
+
+    /** Rolling in-memory log of completed trades per material, used to compute recent buy/sell volume
+     *  (e.g. for custom-sell price negotiation). Not persisted - it only needs to cover a short window. */
+    private record VolumeRecord(long timestampMillis, int signedAmount) {}
+    private final Map<Material, Deque<VolumeRecord>> volumeLog = new EnumMap<>(Material.class);
+
+    private void recordVolume(Material material, int signedAmount) {
+        if (signedAmount == 0) return;
+        volumeLog.computeIfAbsent(material, m -> new ArrayDeque<>())
+                .addLast(new VolumeRecord(System.currentTimeMillis(), signedAmount));
+    }
+
+    /**
+     * Net buy/sell volume for a material within the trailing window. Positive signedAmount entries are
+     * items players bought FROM the market (demand); negative entries are items players sold TO the
+     * market (supply). Also prunes entries older than the window as a side effect.
+     * @return {boughtQuantity, soldQuantity}, both non-negative.
+     */
+    public double[] recentVolume(Material material, long windowMillis) {
+        Deque<VolumeRecord> log = volumeLog.get(material);
+        if (log == null) return new double[]{0, 0};
+        long cutoff = System.currentTimeMillis() - Math.max(0, windowMillis);
+        while (!log.isEmpty() && log.peekFirst().timestampMillis() < cutoff) log.pollFirst();
+        double bought = 0, sold = 0;
+        for (VolumeRecord record : log) {
+            if (record.signedAmount() > 0) bought += record.signedAmount();
+            else sold += -record.signedAmount();
+        }
+        return new double[]{bought, sold};
+    }
 
     public MarketManager(IncogShopPlugin plugin) {
         this.plugin = plugin;
         this.file = new File(plugin.getDataFolder(), "market.yml");
-        this.itemsFile = new File(plugin.getDataFolder(), "shop-items.yml");
         this.auditFile = new File(plugin.getDataFolder(), "audit.log");
     }
 
@@ -64,30 +79,26 @@ public final class MarketManager {
         categoryOverrides.clear();
         subcategoryOverrides.clear();
         YamlConfiguration yml = YamlConfiguration.loadConfiguration(file);
-        YamlConfiguration items = itemsFile.exists() ? YamlConfiguration.loadConfiguration(itemsFile) : new YamlConfiguration();
-        boolean itemsFileExisted = itemsFile.exists();
-        int initial = plugin.getConfig().getInt("market.initial-stock", 750);
+        int initial = plugin.getConfig().getInt("market.initial-stock", 1000);
         stockBootstrapApplied = yml.getBoolean("meta.initial-stock-bootstrap-1_5", false);
+        lastRestockAt = yml.getLong("meta.last-low-stock-restock", 0L);
+        boolean initializeRestockClock = lastRestockAt <= 0;
+        if (initializeRestockClock) lastRestockAt = System.currentTimeMillis();
         Set<String> configExcluded = new HashSet<>(plugin.getConfig().getStringList("market.excluded-materials"));
         List<Material> materials = new ArrayList<>();
         for (Material material : Material.values()) {
             if (!material.isItem() || HARD_EXCLUDED.contains(material.name()) || configExcluded.contains(material.name())) continue;
-            String key = material.name();
-            // Prices/modes/categories now live in shop-items.yml (admin-editable). For servers
-            // upgrading from before 1.8.0, fall back to whatever was previously saved in
-            // market.yml so nobody's price/category customizations are lost.
-            double base = items.getDouble(key + ".base-price", yml.getDouble(key + ".base-price", defaultBasePrice(material)));
-            long stock = yml.getLong(key + ".stock", initial);
-            double pressure = yml.getDouble(key + ".pressure", 0.0);
+            double base = yml.getDouble(material.name() + ".base-price", defaultBasePrice(material));
+            long stock = yml.getLong(material.name() + ".stock", initial);
+            double pressure = yml.getDouble(material.name() + ".pressure", 0.0);
             entries.put(material, new MarketEntry(stock, base, pressure));
-            String modeRaw = items.getString(key + ".mode", yml.getString(key + ".mode", null));
+            String modeRaw = yml.getString(material.name() + ".mode", null);
             MarketMode mode;
-            try { mode = modeRaw == null ? (yml.getBoolean(key + ".enabled", true) ? MarketMode.BUY_SELL : MarketMode.DISABLED) : MarketMode.valueOf(modeRaw); }
+            try { mode = modeRaw == null ? (yml.getBoolean(material.name() + ".enabled", true) ? MarketMode.BUY_SELL : MarketMode.DISABLED) : MarketMode.valueOf(modeRaw); }
             catch (IllegalArgumentException ex) { mode = MarketMode.BUY_SELL; }
-            if (isHardSellOnly(material) && mode == MarketMode.BUY_SELL) mode = MarketMode.SELL_ONLY;
             modes.put(material, mode);
-            String savedCategory = items.getString(key + ".category", yml.getString(key + ".category", ""));
-            String savedSubcategory = items.getString(key + ".subcategory", yml.getString(key + ".subcategory", ""));
+            String savedCategory = yml.getString(material.name() + ".category", "");
+            String savedSubcategory = yml.getString(material.name() + ".subcategory", "");
             try {
                 if (savedCategory != null && !savedCategory.isBlank()) {
                     MarketCategory category = MarketCategory.valueOf(savedCategory);
@@ -107,66 +118,32 @@ public final class MarketManager {
             for (MarketEntry entry : entries.values()) if (entry.stock() < initial) entry.stock(initial);
             stockBootstrapApplied = true;
             plugin.getLogger().info("Applied one-time market stock bootstrap: every tradable material now has at least " + initial + " stock.");
+            save();
         }
         materials.sort(Comparator.comparing(Material::name));
         tradable = Collections.unmodifiableList(materials);
-        save();
-        if (!itemsFileExisted) plugin.getLogger().info("Created shop-items.yml - edit this file to change item prices, market modes, and categories.");
+        if (initializeRestockClock && stockBootstrapApplied) save();
     }
-
-    private static final String ITEMS_FILE_HEADER =
-            "Incog-Shop item configuration\n" +
-            "==============================\n" +
-            "Edit prices, market modes, and categories for the global market here. Reload/restart\n" +
-            "(or /marketadmin reload, if available) to apply changes. This file is regenerated on every\n" +
-            "save with the current values, so keep notes elsewhere - comments added here will not persist.\n" +
-            "\n" +
-            "base-price : the item's price before stock/demand fluctuation (must be > 0)\n" +
-            "mode       : BUY_SELL, SELL_ONLY, or DISABLED\n" +
-            "             Netherite (scrap/ingot/block/tools/armor) and all shulker box colors are\n" +
-            "             hard-restricted to SELL_ONLY in code and cannot be set to BUY_SELL here.\n" +
-            "category   : one of REDSTONE, TOOLS, FARMING, MOB_DROPS, NETHER_END, ORES, DECORATION,\n" +
-            "             BUILDING, BLOCKS, MISC (leave blank to use the automatic category)\n" +
-            "subcategory: must belong to the category above (leave blank to use the automatic one)\n" +
-            "\n" +
-            "Live stock levels and demand pressure are kept separately in market.yml, since those\n" +
-            "change during normal play and aren't meant to be hand-edited.\n";
 
     public void save() {
         YamlConfiguration yml = new YamlConfiguration();
         yml.set("meta.initial-stock-bootstrap-1_5", stockBootstrapApplied);
+        yml.set("meta.last-low-stock-restock", lastRestockAt);
         for (var e : entries.entrySet()) {
             String root = e.getKey().name();
             yml.set(root + ".stock", e.getValue().stock());
+            yml.set(root + ".base-price", WalletManager.round(e.getValue().basePrice()));
             yml.set(root + ".pressure", e.getValue().pressure());
+            MarketMode mode = modes.getOrDefault(e.getKey(), MarketMode.BUY_SELL);
+            yml.set(root + ".mode", mode.name());
+            yml.set(root + ".enabled", mode != MarketMode.DISABLED); // legacy compatibility
+            MarketCategory category = categoryOverrides.get(e.getKey());
+            MarketSubcategory subcategory = subcategoryOverrides.get(e.getKey());
+            yml.set(root + ".category", category == null ? null : category.name());
+            yml.set(root + ".subcategory", subcategory == null ? null : subcategory.name());
         }
         try { yml.save(file); }
         catch (IOException ex) { plugin.getLogger().severe("Could not save market.yml: " + ex.getMessage()); }
-
-        YamlConfiguration items = new YamlConfiguration();
-        for (var e : entries.entrySet()) {
-            String root = e.getKey().name();
-            items.set(root + ".base-price", WalletManager.round(e.getValue().basePrice()));
-            MarketMode mode = modes.getOrDefault(e.getKey(), MarketMode.BUY_SELL);
-            items.set(root + ".mode", mode.name());
-            MarketCategory category = categoryOverrides.get(e.getKey());
-            MarketSubcategory subcategory = subcategoryOverrides.get(e.getKey());
-            items.set(root + ".category", category == null ? null : category.name());
-            items.set(root + ".subcategory", subcategory == null ? null : subcategory.name());
-        }
-        try {
-            plugin.getDataFolder().mkdirs();
-            try (FileWriter fw = new FileWriter(itemsFile)) {
-                fw.write(headerAsComment(ITEMS_FILE_HEADER));
-                fw.write(items.saveToString());
-            }
-        } catch (IOException ex) { plugin.getLogger().severe("Could not save shop-items.yml: " + ex.getMessage()); }
-    }
-
-    private static String headerAsComment(String header) {
-        StringBuilder out = new StringBuilder();
-        for (String line : header.split("\n")) out.append("# ").append(line).append('\n');
-        return out.append('\n').toString();
     }
 
     public List<Material> tradableMaterials() { return tradable; }
@@ -174,15 +151,10 @@ public final class MarketManager {
     public boolean isMarketEnabled(Material m) { return isTradable(m); }
     public boolean isBuyAllowed(Material m) { return entries.containsKey(m) && marketMode(m) == MarketMode.BUY_SELL; }
     public boolean isSellAllowed(Material m) { return entries.containsKey(m) && marketMode(m) != MarketMode.DISABLED; }
-    public MarketMode marketMode(Material m) {
-        MarketMode stored = modes.getOrDefault(m, MarketMode.BUY_SELL);
-        if (isHardSellOnly(m) && stored == MarketMode.BUY_SELL) return MarketMode.SELL_ONLY;
-        return stored;
-    }
+    public MarketMode marketMode(Material m) { return modes.getOrDefault(m, MarketMode.BUY_SELL); }
 
     public boolean setMarketMode(Material material, MarketMode mode, String actor) {
         if (!entries.containsKey(material) || mode == null) return false;
-        if (isHardSellOnly(material) && mode == MarketMode.BUY_SELL) mode = MarketMode.SELL_ONLY;
         MarketMode old = marketMode(material);
         modes.put(material, mode);
         audit("ADMIN_MARKET_MODE", null, actor, material.name(), 0, 0, "old=" + old + ";new=" + mode);
@@ -201,16 +173,14 @@ public final class MarketManager {
     public boolean addOrEnableMaterial(Material material, double basePrice, MarketMode mode, String actor) {
         if (material == null || !material.isItem() || HARD_EXCLUDED.contains(material.name()) || material == Material.ANCIENT_DEBRIS) return false;
         if (!entries.containsKey(material)) {
-            long initial = plugin.getConfig().getLong("market.initial-stock", 750);
+            long initial = plugin.getConfig().getLong("market.initial-stock", 1000);
             entries.put(material, new MarketEntry(initial, basePrice > 0 ? basePrice : defaultBasePrice(material), 0));
             List<Material> rebuilt = new ArrayList<>(entries.keySet());
             rebuilt.sort(Comparator.comparing(Material::name));
             tradable = Collections.unmodifiableList(rebuilt);
         }
         if (basePrice > 0 && Double.isFinite(basePrice)) entries.get(material).basePrice(basePrice);
-        MarketMode resolved = mode == null ? MarketMode.BUY_SELL : mode;
-        if (isHardSellOnly(material) && resolved == MarketMode.BUY_SELL) resolved = MarketMode.SELL_ONLY;
-        modes.put(material, resolved);
+        modes.put(material, mode == null ? MarketMode.BUY_SELL : mode);
         audit("ADMIN_MARKET_ADD", null, actor, material.name(), 0, entries.get(material).basePrice(), "mode=" + marketMode(material));
         save();
         return true;
@@ -282,7 +252,8 @@ public final class MarketManager {
         double scarcity = Math.sqrt(target / scarcityStock);
         double demand = Math.exp(e.pressure());
         double multiplier = Math.max(floor, Math.min(ceiling, scarcity * demand));
-        return Math.max(0.01, WalletManager.round(e.basePrice() * multiplier));
+        double scale = Math.max(0.01, plugin.getConfig().getDouble("market.price-scale", 1.0));
+        return Math.max(0.01, WalletManager.round(e.basePrice() * multiplier * scale));
     }
 
     public double sellUnitPrice(Material m) {
@@ -312,13 +283,18 @@ public final class MarketManager {
 
         if (!isInfiniteStockEnabled()) e.stock(e.stock() - amount);
         pushPressure(e, amount);
+        recordVolume(material, amount);
         player.getInventory().addItem(new ItemStack(material, amount));
         audit("MARKET_BUY", player.getUniqueId(), player.getName(), material.name(), amount, total, "");
-        plugin.transactionLog().bought(player, material, amount, total, WalletManager.round(total / amount));
         return new TradeResult(true, "Bought " + amount + "x " + material.name() + ".", amount, total);
     }
 
-    public TradeResult sell(Player player, Material material, int requested) {
+    public TradeResult sell(Player player, Material material, int requested) { return sell(player, material, requested, null); }
+
+    /** @param unitPriceOverride when non-null, this exact per-unit price is used instead of the standard
+     *  dynamic sellUnitPrice(material) - used by the /sell custom-price negotiation flow, which computes
+     *  its own balanced price ahead of time. */
+    public TradeResult sell(Player player, Material material, int requested, Double unitPriceOverride) {
         MarketEntry e = entries.get(material);
         if (e == null || !isSellAllowed(material)) return new TradeResult(false, "That material cannot currently be sold to the market.", 0, 0);
         long maxStock = Math.max(1, plugin.getConfig().getLong("market.maximum-stock-per-material", 1_000_000));
@@ -327,16 +303,48 @@ public final class MarketManager {
         amount = (int) Math.min(amount, Math.max(0, maxStock - e.stock()));
         if (amount <= 0) return new TradeResult(false, available <= 0 ? "You have no eligible plain items to sell." : "The market is at maximum stock for this item.", 0, 0);
 
-        double gross = sellUnitPrice(material) * amount;
+        double unitPrice = unitPriceOverride != null ? Math.max(0.01, unitPriceOverride) : sellUnitPrice(material);
+        double gross = unitPrice * amount;
         double feePct = Math.max(0, plugin.getConfig().getDouble("market.transaction-fee-percent", 2.0));
         double payout = WalletManager.round(gross * (1 - feePct / 100.0));
         if (!removePlain(player, material, amount)) return new TradeResult(false, "Your inventory changed before the sale completed.", 0, 0);
 
         e.stock(e.stock() + amount);
         pushPressure(e, -amount);
+        recordVolume(material, -amount);
         plugin.wallets().deposit(player.getUniqueId(), payout);
-        audit("MARKET_SELL", player.getUniqueId(), player.getName(), material.name(), amount, payout, "");
-        plugin.transactionLog().sold(player, material, amount, payout, WalletManager.round(payout / amount));
+        audit(unitPriceOverride != null ? "MARKET_SELL_CUSTOM" : "MARKET_SELL", player.getUniqueId(), player.getName(), material.name(), amount, payout, "");
+        return new TradeResult(true, "Sold " + amount + "x " + material.name() + ".", amount, payout);
+    }
+
+    /** Sells only the ItemStack currently in the player's main hand (not other matching stacks elsewhere
+     *  in the inventory), for /sell hand. See {@link #sell(Player, Material, int, Double)} for unitPriceOverride. */
+    public TradeResult sellHand(Player player, Double unitPriceOverride) {
+        ItemStack hand = player.getInventory().getItemInMainHand();
+        if (!isEligibleStack(hand)) return new TradeResult(false, "Hold an eligible, plain item in your hand to sell it.", 0, 0);
+        Material material = hand.getType();
+        MarketEntry e = entries.get(material);
+        long maxStock = Math.max(1, plugin.getConfig().getLong("market.maximum-stock-per-material", 1_000_000));
+        int amount = (int) Math.min(hand.getAmount(), Math.max(0, maxStock - e.stock()));
+        if (amount <= 0) return new TradeResult(false, "The market is at maximum stock for this item.", 0, 0);
+
+        double unitPrice = unitPriceOverride != null ? Math.max(0.01, unitPriceOverride) : sellUnitPrice(material);
+        double gross = unitPrice * amount;
+        double feePct = Math.max(0, plugin.getConfig().getDouble("market.transaction-fee-percent", 2.0));
+        double payout = WalletManager.round(gross * (1 - feePct / 100.0));
+
+        e.stock(e.stock() + amount);
+        pushPressure(e, -amount);
+        recordVolume(material, -amount);
+        if (!plugin.wallets().deposit(player.getUniqueId(), payout)) {
+            e.stock(e.stock() - amount);
+            pushPressure(e, amount);
+            recordVolume(material, amount);
+            return new TradeResult(false, "The economy provider rejected the payment.", 0, 0);
+        }
+        if (amount >= hand.getAmount()) player.getInventory().setItemInMainHand(null);
+        else hand.setAmount(hand.getAmount() - amount);
+        audit(unitPriceOverride != null ? "MARKET_SELL_CUSTOM" : "MARKET_SELL_HAND", player.getUniqueId(), player.getName(), material.name(), amount, payout, "");
         return new TradeResult(true, "Sold " + amount + "x " + material.name() + ".", amount, payout);
     }
 
@@ -382,15 +390,20 @@ public final class MarketManager {
         double payout = WalletManager.round(gross * (1 - feePct / 100.0));
         e.stock(e.stock() + amount);
         pushPressure(e, -amount);
+        recordVolume(material, -amount);
         if (!plugin.wallets().deposit(player.getUniqueId(), payout)) {
             e.stock(e.stock() - amount);
             pushPressure(e, amount);
+            recordVolume(material, amount);
             return new TradeResult(false, "The economy provider rejected the payment.", 0, 0);
         }
         audit("MARKET_SELL_GUI", player.getUniqueId(), player.getName(), material.name(), amount, payout, "");
-        plugin.transactionLog().sold(player, material, amount, payout, WalletManager.round(payout / amount));
         return new TradeResult(true, "Sold " + amount + "x " + material.name() + ".", amount, payout);
     }
+
+    /** How many plain (non-custom-metadata, per market.reject-custom-items) items of this material the
+     *  player is carrying and could sell right now via /sell &lt;item&gt;. */
+    public int sellableCount(Player player, Material material) { return countPlain(player, material); }
 
     private int countPlain(Player player, Material material) {
         int count = 0;
@@ -435,6 +448,37 @@ public final class MarketManager {
         double impact = plugin.getConfig().getDouble("market.demand-impact-per-item", 0.0035);
         double max = Math.max(0.01, plugin.getConfig().getDouble("market.maximum-demand-pressure", 1.25));
         e.pressure(clamp(e.pressure() + signedItems * impact, -max, max));
+    }
+
+
+    public void checkScheduledRestock() {
+        if (!plugin.getConfig().getBoolean("market.auto-restock.enabled", true)) return;
+        long intervalHours = Math.max(1, plugin.getConfig().getLong("market.auto-restock.interval-hours", 72));
+        long interval = intervalHours * 60L * 60L * 1000L;
+        long now = System.currentTimeMillis();
+        if (now - lastRestockAt < interval) return;
+
+        long threshold = Math.max(0, plugin.getConfig().getLong("market.auto-restock.below-stock", 100));
+        long min = Math.max(0, plugin.getConfig().getLong("market.auto-restock.minimum-stock", 500));
+        long max = Math.max(min, plugin.getConfig().getLong("market.auto-restock.maximum-stock", 1000));
+        int changed = 0;
+        java.util.concurrent.ThreadLocalRandom random = java.util.concurrent.ThreadLocalRandom.current();
+
+        for (var entry : entries.entrySet()) {
+            Material material = entry.getKey();
+            MarketEntry marketEntry = entry.getValue();
+            if (!isBuyAllowed(material)) continue;
+            if (marketEntry.stock() >= threshold) continue;
+            long old = marketEntry.stock();
+            long target = min == max ? min : random.nextLong(min, max + 1);
+            marketEntry.stock(target);
+            changed++;
+            audit("AUTO_RESTOCK", null, "SYSTEM", material.name(), 0, target, "old=" + old);
+        }
+
+        lastRestockAt = now;
+        save();
+        plugin.getLogger().info("3-day market restock completed: " + changed + " low-stock material(s) reset to " + min + "-" + max + " stock.");
     }
 
     public void decayDemand() {
@@ -516,7 +560,6 @@ public final class MarketManager {
         if (n.endsWith("_CANDLE")) return 5;
         if (n.contains("POTTERY_SHERD") || n.contains("SMITHING_TEMPLATE")) return 175;
         if (n.endsWith("_MUSIC_DISC") || n.startsWith("MUSIC_DISC_")) return 250;
-        if (n.endsWith("SHULKER_BOX")) return 900.0;
         return 8.0;
     }
 

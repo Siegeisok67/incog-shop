@@ -13,9 +13,15 @@ import com.snipeyfresh.incogshop.market.MarketManager;
 import com.snipeyfresh.incogshop.order.MarketOrderManager;
 import com.snipeyfresh.incogshop.shop.ShopManager;
 import com.snipeyfresh.incogshop.util.Text;
+import com.snipeyfresh.incogshop.stash.StashManager;
+import com.snipeyfresh.incogshop.xp.XpVaultManager;
+import com.snipeyfresh.incogshop.gui.StashGui;
+import com.snipeyfresh.incogshop.gui.XpVaultGui;
+import com.snipeyfresh.incogshop.gui.AdminSetupGui;
 import com.snipeyfresh.incogshop.custom.CustomCategoryManager;
 import com.snipeyfresh.incogshop.custom.GuiLayoutManager;
 import com.snipeyfresh.incogshop.gui.LayoutEditorGui;
+import com.snipeyfresh.incogshop.sell.CustomPriceManager;
 import org.bukkit.Bukkit;
 import org.bukkit.command.PluginCommand;
 import org.bukkit.entity.Player;
@@ -38,7 +44,13 @@ public final class IncogShopPlugin extends JavaPlugin {
     private CustomCategoryManager customCategories;
     private GuiLayoutManager layouts;
     private LayoutEditorGui layoutEditor;
-    private com.snipeyfresh.incogshop.util.TransactionLog transactionLog;
+    private StashManager stash;
+    private StashGui stashGui;
+    private XpVaultManager xpVault;
+    private XpVaultGui xpVaultGui;
+    private AdminSetupGui adminSetupGui;
+    private CustomPriceManager customPrices;
+    private CustomSellListener customSellListener;
 
     @Override
     public void onEnable() {
@@ -62,11 +74,19 @@ public final class IncogShopPlugin extends JavaPlugin {
         auctionGui = new AuctionGui(this);
         orderGui = new com.snipeyfresh.incogshop.gui.OrderBookGui(this);
         layoutEditor = new LayoutEditorGui(this);
-        transactionLog = new com.snipeyfresh.incogshop.util.TransactionLog(this);
+        stash = new StashManager(this);
+        stashGui = new StashGui(this);
+        xpVault = new XpVaultManager(this);
+        xpVaultGui = new XpVaultGui(this);
+        adminSetupGui = new AdminSetupGui(this);
+        customPrices = new CustomPriceManager(this);
+        customSellListener = new CustomSellListener(this);
 
         market.load();
         customCategories.load();
         layouts.load();
+        stash.load();
+        xpVault.load();
         shops.load();
         auctions.load();
         orders.load();
@@ -83,7 +103,8 @@ public final class IncogShopPlugin extends JavaPlugin {
         PluginCommand marketPluginCommand = Objects.requireNonNull(getCommand("market"));
         marketPluginCommand.setExecutor(marketCommand); marketPluginCommand.setTabCompleter(marketCommand);
         Objects.requireNonNull(getCommand("sell")).setExecutor(new SellCommand(this));
-        Objects.requireNonNull(getCommand("sellwand")).setExecutor(new SellWandCommand(this));
+        Objects.requireNonNull(getCommand("stash")).setExecutor(new StashCommand(this));
+        Objects.requireNonNull(getCommand("xpvault")).setExecutor(new XpVaultCommand(this));
 
         PlayerShopCommand pshop = new PlayerShopCommand(this);
         PluginCommand pshopCommand = Objects.requireNonNull(getCommand("pshop"));
@@ -99,12 +120,16 @@ public final class IncogShopPlugin extends JavaPlugin {
 
         getServer().getPluginManager().registerEvents(new GuiListener(this), this);
         getServer().getPluginManager().registerEvents(new LayoutEditorListener(this), this);
+        getServer().getPluginManager().registerEvents(new AdminSetupListener(this), this);
         getServer().getPluginManager().registerEvents(new SellGuiListener(this), this);
+        getServer().getPluginManager().registerEvents(new StashGuiListener(this), this);
+        getServer().getPluginManager().registerEvents(new StashOverflowListener(this), this);
+        getServer().getPluginManager().registerEvents(new XpVaultGuiListener(this), this);
         getServer().getPluginManager().registerEvents(new AuctionGuiListener(this), this);
         getServer().getPluginManager().registerEvents(new OrderGuiListener(this), this);
         getServer().getPluginManager().registerEvents(new ShopProtectionListener(this), this);
         getServer().getPluginManager().registerEvents(new PlayerListener(this), this);
-        getServer().getPluginManager().registerEvents(new SellWandListener(this), this);
+        getServer().getPluginManager().registerEvents(customSellListener, this);
 
         getServer().getScheduler().runTaskTimer(this, () -> {
             market.decayDemand();
@@ -115,10 +140,11 @@ public final class IncogShopPlugin extends JavaPlugin {
         getServer().getScheduler().runTaskTimer(this, history::captureChangedPrices, historyTicks, historyTicks);
         getServer().getScheduler().runTaskTimer(this, history::pruneAndRewrite, 20L * 60L * 60L, 20L * 60L * 60L);
         getServer().getScheduler().runTaskTimer(this, auctions::settleExpired, 20L * 30, 20L * 30);
+        getServer().getScheduler().runTaskTimer(this, market::checkScheduledRestock, 20L * 60L, 20L * 60L);
         long saveTicks = Math.max(20L, getConfig().getLong("saving.autosave-seconds", 60) * 20L);
         getServer().getScheduler().runTaskTimer(this, this::saveAllData, saveTicks, saveTicks);
 
-        getLogger().info("Incog-Shop 1.8.0 by SnipeyFresh enabled. Economy provider: " + wallets.providerName() + ". Tradable materials: " + market.tradableMaterials().size() + ".");
+        getLogger().info("Incog-Shop 1.8.4 by SnipeyFresh enabled. Economy provider: " + wallets.providerName() + ". Tradable materials: " + market.tradableMaterials().size() + ".");
     }
 
     @Override public void onDisable() {
@@ -140,7 +166,13 @@ public final class IncogShopPlugin extends JavaPlugin {
     public CustomCategoryManager customCategories() { return customCategories; }
     public GuiLayoutManager layouts() { return layouts; }
     public LayoutEditorGui layoutEditor() { return layoutEditor; }
-    public com.snipeyfresh.incogshop.util.TransactionLog transactionLog() { return transactionLog; }
+    public StashManager stash() { return stash; }
+    public StashGui stashGui() { return stashGui; }
+    public XpVaultManager xpVault() { return xpVault; }
+    public XpVaultGui xpVaultGui() { return xpVaultGui; }
+    public AdminSetupGui adminSetupGui() { return adminSetupGui; }
+    public CustomPriceManager customPrices() { return customPrices; }
+    public CustomSellListener customSell() { return customSellListener; }
 
     public String prefix() { return Text.color(getConfig().getString("messages.prefix", "&6[Incog-Shop]&r ")); }
     public String money(double amount) { return getConfig().getString("economy.currency-symbol", "$") + String.format("%,.2f", amount); }
@@ -152,6 +184,8 @@ public final class IncogShopPlugin extends JavaPlugin {
         if (auctions != null) auctions.save();
         if (orders != null) orders.save();
         if (customCategories != null) customCategories.save();
+        if (stash != null) stash.save();
+        if (xpVault != null) xpVault.save();
     }
 
     public void reloadAll() {
@@ -161,6 +195,8 @@ public final class IncogShopPlugin extends JavaPlugin {
         market.load();
         customCategories.load();
         layouts.load();
+        stash.load();
+        xpVault.load();
         shops.load();
         auctions.load();
         orders.load();

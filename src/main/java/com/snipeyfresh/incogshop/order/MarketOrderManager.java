@@ -2,7 +2,6 @@ package com.snipeyfresh.incogshop.order;
 
 import com.snipeyfresh.incogshop.IncogShopPlugin;
 import com.snipeyfresh.incogshop.economy.WalletManager;
-import com.snipeyfresh.incogshop.market.MarketEntry;
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.configuration.file.YamlConfiguration;
@@ -132,17 +131,15 @@ public final class MarketOrderManager {
     public Result createBuy(Player player, Material material, int amount, double unitPrice) {
         Result valid = validateCreate(player, material, amount, unitPrice);
         if (!valid.success()) return valid;
-        if (!plugin.market().isBuyAllowed(material)) return new Result(false, "That material is Sell Only and cannot be bought - not even with a Buy Order.");
         double escrow = WalletManager.round(unitPrice * amount);
         if (!Double.isFinite(escrow) || escrow <= 0) return new Result(false, "That order total is invalid or too large.");
         if (!plugin.wallets().withdraw(player.getUniqueId(), escrow)) return new Result(false, "You need " + plugin.money(escrow) + " available to fund this Buy Order.");
         MarketOrder order = new MarketOrder(UUID.randomUUID(), MarketOrder.Type.BUY, player.getUniqueId(), player.getName(), material, amount, amount, unitPrice, System.currentTimeMillis());
         orders.put(order.id(), order);
-        plugin.market().audit("ORDER_BUY_CREATE", player.getUniqueId(), player.getName(), material.name(), amount, escrow, "price=" + unitPrice + ";id=" + order.id());
-        plugin.transactionLog().createdBuyOffer(player, material, amount, escrow, unitPrice);
         matchBuy(order);
         if (order.remaining() <= 0) orders.remove(order.id());
         save();
+        plugin.market().audit("ORDER_BUY_CREATE", player.getUniqueId(), player.getName(), material.name(), amount, escrow, "price=" + unitPrice + ";id=" + order.id());
         return new Result(true, order.remaining() <= 0
                 ? "Your Buy Order filled immediately."
                 : "Buy Order placed for " + order.remaining() + "x " + material.name() + " at up to " + plugin.money(unitPrice) + " each. ID: " + shortId(order.id()));
@@ -151,24 +148,13 @@ public final class MarketOrderManager {
     public Result createSell(Player player, Material material, int amount, double unitPrice) {
         Result valid = validateCreate(player, material, amount, unitPrice);
         if (!valid.success()) return valid;
-        MarketEntry reference = plugin.market().entry(material);
-        if (reference != null) {
-            double minMult = Math.max(0, plugin.getConfig().getDouble("market-orders.sell-price-min-multiplier", 0.5));
-            double maxMult = Math.max(minMult, plugin.getConfig().getDouble("market-orders.sell-price-max-multiplier", 2.0));
-            double min = reference.basePrice() * minMult;
-            double max = reference.basePrice() * maxMult;
-            if (unitPrice < min - 1e-9 || unitPrice > max + 1e-9) {
-                return new Result(false, "Sell Order price must be between " + plugin.money(min) + " and " + plugin.money(max) + " per item for " + material.name() + ".");
-            }
-        }
         if (!removePlain(player, material, amount)) return new Result(false, "You do not have " + amount + " eligible plain " + material.name() + " item(s) to escrow.");
         MarketOrder order = new MarketOrder(UUID.randomUUID(), MarketOrder.Type.SELL, player.getUniqueId(), player.getName(), material, amount, amount, unitPrice, System.currentTimeMillis());
         orders.put(order.id(), order);
-        plugin.market().audit("ORDER_SELL_CREATE", player.getUniqueId(), player.getName(), material.name(), amount, unitPrice * amount, "price=" + unitPrice + ";id=" + order.id());
-        plugin.transactionLog().createdSellOffer(player, material, amount, WalletManager.round(unitPrice * amount), unitPrice);
         matchSell(order);
         if (order.remaining() <= 0) orders.remove(order.id());
         save();
+        plugin.market().audit("ORDER_SELL_CREATE", player.getUniqueId(), player.getName(), material.name(), amount, unitPrice * amount, "price=" + unitPrice + ";id=" + order.id());
         return new Result(true, order.remaining() <= 0
                 ? "Your Sell Order filled immediately."
                 : "Sell Order placed for " + order.remaining() + "x " + material.name() + " at " + plugin.money(unitPrice) + " each. ID: " + shortId(order.id()));
@@ -192,7 +178,10 @@ public final class MarketOrderManager {
         orders.remove(order.id());
         if (order.type() == MarketOrder.Type.BUY) {
             double refund = WalletManager.round(order.unitPrice() * order.remaining());
-            plugin.wallets().depositOrQueue(order.owner(), refund);
+            if (!plugin.wallets().deposit(order.owner(), refund)) {
+                orders.put(order.id(), order);
+                return new Result(false, "The economy provider rejected the escrow refund; order was left active safely.");
+            }
         } else {
             addClaim(order.owner(), order.material(), order.remaining());
         }
@@ -229,8 +218,12 @@ public final class MarketOrderManager {
         double sellerPayout = WalletManager.round(gross * (1.0 - taxPct / 100.0));
         double buyerRefund = WalletManager.round(Math.max(0, (buy.unitPrice() - tradePrice) * qty));
 
-        plugin.wallets().depositOrQueue(sell.owner(), sellerPayout);
-        if (buyerRefund > 0) plugin.wallets().depositOrQueue(buy.owner(), buyerRefund);
+        if (!plugin.wallets().deposit(sell.owner(), sellerPayout)) return false;
+        if (buyerRefund > 0 && !plugin.wallets().deposit(buy.owner(), buyerRefund)) {
+            // Extremely rare provider failure. Put the seller payout back into escrow-equivalent state if possible.
+            plugin.wallets().withdraw(sell.owner(), sellerPayout);
+            return false;
+        }
 
         buy.fill(qty);
         sell.fill(qty);
@@ -291,27 +284,24 @@ public final class MarketOrderManager {
     }
 
     public int claim(Player player) {
-        EnumMap<Material, Integer> map = itemClaims.get(player.getUniqueId());
+        EnumMap<Material, Integer> map = itemClaims.remove(player.getUniqueId());
         if (map == null || map.isEmpty()) return 0;
         int delivered = 0;
-        for (Material material : new ArrayList<>(map.keySet())) {
-            int remaining = map.getOrDefault(material, 0);
+        int stashed = 0;
+        for (var entry : map.entrySet()) {
+            Material material = entry.getKey();
+            int remaining = entry.getValue();
             int max = Math.max(1, material.getMaxStackSize());
             while (remaining > 0) {
                 int amount = Math.min(max, remaining);
                 ItemStack stack = new ItemStack(material, amount);
-                Map<Integer, ItemStack> leftovers = player.getInventory().addItem(stack);
-                int left = leftovers.values().stream().mapToInt(ItemStack::getAmount).sum();
-                int given = amount - left;
-                if (given <= 0) break;
-                remaining -= given;
-                delivered += given;
-                if (left > 0) break;
+                stashed += plugin.stash().deliverOrStash(player, stack);
+                remaining -= amount;
+                delivered += amount;
             }
-            if (remaining <= 0) map.remove(material); else map.put(material, remaining);
         }
-        if (map.isEmpty()) itemClaims.remove(player.getUniqueId());
         save();
+        if (stashed > 0) player.sendMessage(plugin.prefix() + "§dSome Market Order items did not fit and were moved to /stash.");
         return delivered;
     }
 

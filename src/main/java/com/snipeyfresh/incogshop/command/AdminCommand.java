@@ -27,7 +27,7 @@ public final class AdminCommand implements TabExecutor {
             case "gui" -> {
                 if (!perm(sender, "incogshop.admin.gui")) return true;
                 if (!(sender instanceof Player p)) { sender.sendMessage("Players only for the GUI."); return true; }
-                plugin.gui().openCategories(p, true);
+                plugin.adminSetupGui().open(p);
             }
             case "layout" -> {
                 if (!perm(sender, "incogshop.admin.layout")) return true;

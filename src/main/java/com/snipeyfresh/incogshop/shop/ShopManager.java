@@ -138,7 +138,7 @@ public final class ShopManager {
         buyer.getInventory().addItem(stackOf(shop.item(), amount));
         double taxPct = Math.max(0, plugin.getConfig().getDouble("player-shops.sales-tax-percent", 3.0));
         double ownerPayout = WalletManager.round(total * (1 - Math.min(100, taxPct) / 100.0));
-        plugin.wallets().depositOrQueue(shop.owner(), ownerPayout);
+        plugin.wallets().deposit(shop.owner(), ownerPayout);
         plugin.market().audit("PLAYER_SHOP_BUY", buyer.getUniqueId(), buyer.getName(), shop.id().toString(), amount, total, "owner=" + shop.owner() + ",payout=" + ownerPayout);
         return new ShopResult(true, "Purchased " + amount + " item(s).", amount, total);
     }

@@ -128,7 +128,6 @@ public final class AuctionManager {
         listings.put(id, new AuctionListing(id, seller.getUniqueId(), seller.getName(), item, mode, price, buyNow, now, expiresAt, null, "", 0));
         save();
         plugin.market().audit("AH_LIST", seller.getUniqueId(), seller.getName(), id.toString(), item.getAmount(), price, "mode=" + mode + ";fee=" + fee + ";permanent=" + permanent);
-        if (mode == AuctionListing.Mode.AUCTION) plugin.transactionLog().createdAuction(seller, item.getType(), price, id);
         return new Result(true, "Listed " + item.getAmount() + "x " + item.getType().name() + " for " + plugin.money(price)
                 + " (" + mode.name().replace('_', ' ') + (permanent ? ", NEVER EXPIRES" : "") + "). ID: " + shortId(id));
     }
@@ -143,13 +142,15 @@ public final class AuctionManager {
         double minimum = listing.hasBid() ? WalletManager.round(listing.highBid() + increment) : listing.startPrice();
         if (amount + 1e-9 < minimum) return new Result(false, "Minimum bid is " + plugin.money(minimum) + ".");
         if (!plugin.wallets().withdraw(bidder.getUniqueId(), amount)) return new Result(false, "You do not have enough money.");
-        if (listing.highBidder() != null) plugin.wallets().depositOrQueue(listing.highBidder(), listing.highBid());
+        if (listing.highBidder() != null && !plugin.wallets().deposit(listing.highBidder(), listing.highBid())) {
+            plugin.wallets().deposit(bidder.getUniqueId(), amount);
+            return new Result(false, "Could not refund the previous bidder; bid cancelled safely.");
+        }
         UUID previous = listing.highBidder();
         double oldBid = listing.highBid();
         listing.setHighBid(bidder.getUniqueId(), bidder.getName(), amount);
         save();
         plugin.market().audit("AH_BID", bidder.getUniqueId(), bidder.getName(), listing.id().toString(), listing.item().getAmount(), amount, "previous=" + previous + ";old=" + oldBid);
-        plugin.transactionLog().bidOn(bidder, listing.item().getType(), amount, listing.id());
         return new Result(true, "You are now the high bidder at " + plugin.money(amount) + ".");
     }
 
@@ -161,7 +162,10 @@ public final class AuctionManager {
         double price = listing.buyNowPrice();
         if (!plugin.wallets().withdraw(buyer.getUniqueId(), price)) return new Result(false, "You do not have enough money.");
         double payout = taxed(price);
-        plugin.wallets().depositOrQueue(listing.seller(), payout);
+        if (!plugin.wallets().deposit(listing.seller(), payout)) {
+            plugin.wallets().deposit(buyer.getUniqueId(), price);
+            return new Result(false, "Seller payment failed; purchase was cancelled safely.");
+        }
         listings.remove(listing.id());
         giveOrClaim(buyer, listing.item());
         save();
@@ -181,19 +185,32 @@ public final class AuctionManager {
         return new Result(true, "Listing cancelled. The item was returned to your Auction House claims.");
     }
 
-    public int claim(Player player) {
+    public List<ItemStack> claimItems(UUID player) {
+        return claims.getOrDefault(player, List.of()).stream().map(ItemStack::clone).toList();
+    }
+
+    public boolean claimIndex(Player player, int index) {
         List<ItemStack> pending = claims.get(player.getUniqueId());
-        if (pending == null || pending.isEmpty()) return 0;
-        int delivered = 0;
-        Iterator<ItemStack> it = pending.iterator();
-        while (it.hasNext()) {
-            ItemStack item = it.next();
-            Map<Integer, ItemStack> extra = player.getInventory().addItem(item.clone());
-            if (extra.isEmpty()) { delivered++; it.remove(); }
-            else break;
-        }
+        if (pending == null || index < 0 || index >= pending.size()) return false;
+        ItemStack item = pending.remove(index);
+        int overflow = plugin.stash().deliverOrStash(player, item);
+        if (overflow > 0) player.sendMessage(plugin.prefix() + "§dYour inventory was full; auction claim overflow was moved to /stash.");
         if (pending.isEmpty()) claims.remove(player.getUniqueId());
         save();
+        return true;
+    }
+
+    public int claim(Player player) {
+        List<ItemStack> pending = claims.remove(player.getUniqueId());
+        if (pending == null || pending.isEmpty()) return 0;
+        int delivered = 0;
+        int stashed = 0;
+        for (ItemStack item : pending) {
+            stashed += plugin.stash().deliverOrStash(player, item);
+            delivered++;
+        }
+        save();
+        if (stashed > 0) player.sendMessage(plugin.prefix() + "§dSome claimed auction items did not fit and were moved to /stash.");
         return delivered;
     }
 
@@ -215,9 +232,15 @@ public final class AuctionManager {
             listings.remove(listing.id());
             if (listing.mode() == AuctionListing.Mode.AUCTION && listing.hasBid()) {
                 double payout = taxed(listing.highBid());
-                plugin.wallets().depositOrQueue(listing.seller(), payout);
-                addClaim(listing.highBidder(), listing.item());
-                plugin.market().audit("AH_SETTLE", listing.highBidder(), listing.highBidderName(), listing.id().toString(), listing.item().getAmount(), listing.highBid(), "seller=" + listing.seller() + ";payout=" + payout);
+                if (!plugin.wallets().deposit(listing.seller(), payout)) {
+                    // If seller payment fails, unwind escrow and return the item.
+                    plugin.wallets().deposit(listing.highBidder(), listing.highBid());
+                    addClaim(listing.seller(), listing.item());
+                    plugin.getLogger().warning("Auction " + listing.id() + " settlement failed; bidder refunded and item returned.");
+                } else {
+                    addClaim(listing.highBidder(), listing.item());
+                    plugin.market().audit("AH_SETTLE", listing.highBidder(), listing.highBidderName(), listing.id().toString(), listing.item().getAmount(), listing.highBid(), "seller=" + listing.seller() + ";payout=" + payout);
+                }
             } else addClaim(listing.seller(), listing.item());
         }
         save();
@@ -229,8 +252,8 @@ public final class AuctionManager {
     }
 
     private void giveOrClaim(Player player, ItemStack item) {
-        Map<Integer, ItemStack> extra = player.getInventory().addItem(item.clone());
-        if (!extra.isEmpty()) for (ItemStack left : extra.values()) addClaim(player.getUniqueId(), left);
+        int overflow = plugin.stash().deliverOrStash(player, item);
+        if (overflow > 0) player.sendMessage(plugin.prefix() + "§dYour inventory was full; purchase overflow was moved to /stash.");
     }
 
     private void addClaim(UUID player, ItemStack item) { claims.computeIfAbsent(player, x -> new ArrayList<>()).add(item.clone()); }

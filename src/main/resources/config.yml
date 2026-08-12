@@ -11,13 +11,18 @@ market:
   # false = purchases require and consume actual server stock.
   infinite-stock-enabled: false
 
-  # New market materials start with 750 stock, shared server-wide. Buying an item lowers this
-  # stock for everyone; selling raises it back. On first startup, existing materials below this
-  # amount are raised to it once.
-  initial-stock: 750
+  # New market materials start with 1,000 stock. On first 1.5.0 startup, existing materials below 1,000 are raised to 1,000 once.
+  initial-stock: 1000
   target-stock: 512
   maximum-stock-per-material: 1000000
-  buy-sell-spread: 0.22
+  # Multiplies every buy AND sell price for every material, on top of everything else below.
+  # Raise this to make the whole market more expensive without hand-editing every base price
+  # in market.yml (existing saved base-price values are left untouched; this scales the price
+  # actually charged/paid at trade time).
+  price-scale: 1.5
+  # Sell price = buy price * (1 - buy-sell-spread). Raised from 0.22 so selling to the market
+  # pays noticeably less relative to what it costs to buy the same item back.
+  buy-sell-spread: 0.35
   minimum-price-multiplier: 0.35
   maximum-price-multiplier: 4.0
   demand-impact-per-item: 0.0035
@@ -25,12 +30,35 @@ market:
   maximum-demand-pressure: 1.25
   reject-custom-items: true
   transaction-fee-percent: 2.0
-  # Ancient Debris is always excluded.
-  # Netherite in every form (scrap, ingot, block, tools, and armor) and every shulker box color
-  # are hard-restricted to Sell Only: players can sell them to the market, but nothing can ever
-  # buy them back from server stock, a Buy Order, a Buy Order fill, or the item-add admin command.
-  # This is enforced in code, not just by mode, so it cannot be reverted by editing shop-items.yml.
+  auto-restock:
+    enabled: true
+    interval-hours: 72
+    below-stock: 100
+    minimum-stock: 500
+    maximum-stock: 1000
+  # Ancient debris is always excluded. Netherite items are tradable.
   excluded-materials: []
+
+# /sell hand and /sell <item> ask the player if they want to propose a custom price instead of the
+# standard dynamic market price. A proposed price is never paid out as-is: it's blended against the
+# current market price, recent custom-price proposals for that item, current stock, and how much of
+# that item has actually been bought/sold in the trailing window below, to produce a single "balanced"
+# price. The transaction always executes at the balanced price - the difference between what the
+# player asked for and the balanced price is voided (discarded), it is never paid by/to anyone.
+custom-sell:
+  enabled: true
+  # How far back to look when averaging recent custom-price proposals and buy/sell volume.
+  window-hours: 6
+  # These three weights should add up to 1.0. They control how much the balanced price leans on:
+  # the current dynamic market price, the average of recent custom-price proposals for this item,
+  # and the recent net buy/sell volume imbalance for this item, respectively.
+  market-weight: 0.55
+  custom-weight: 0.30
+  volume-weight: 0.15
+  # However the weighting comes out, the balanced price is still clamped to this range around the
+  # current standard market sell price, so one wild proposal can't swing the real price too far.
+  min-deviation-multiplier: 0.4
+  max-deviation-multiplier: 2.5
 
 player-shops:
   enabled: true
@@ -67,21 +95,7 @@ market-orders:
   maximum-items-per-order: 100000
   # Seller fee taken only when an order actually fills.
   sales-tax-percent: 1.0
-  # Players choose their own Sell Order price, but it must stay within this range around the
-  # item's current base price (see shop-items.yml). Example: 0.5 and 2.0 let a sell order be
-  # priced anywhere from half to double the base price.
-  sell-price-min-multiplier: 0.5
-  sell-price-max-multiplier: 2.0
 
-sell-wand:
-  # /sellwand gives a wand item. Right-clicking a chest, trapped chest, barrel, or any shulker
-  # box (shulker boxes are always allowed regardless of the list below) instantly sells every
-  # eligible plain item inside to the server market, the same as the /sell GUI would.
-  enabled: true
-  containers:
-    - CHEST
-    - TRAPPED_CHEST
-    - BARREL
 
 discord-price-check:
   # Requires DiscordSRV. Incog-Shop uses DiscordSRV's existing bot connection;
@@ -95,3 +109,10 @@ discord-price-check:
   # Default windows shown by !price <item>.
   default-windows: ["1h", "7h", "24h", "7d"]
 
+
+stash:
+  gameplay-overflow:
+    enabled: true
+    block-drops: true
+    mob-drops: true
+    notify: true

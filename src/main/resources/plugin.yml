@@ -1,5 +1,5 @@
 name: Incog-Shop
-version: 1.8.0
+version: 1.8.4
 main: com.snipeyfresh.incogshop.IncogShopPlugin
 api-version: '26.2'
 author: SnipeyFresh
@@ -13,13 +13,18 @@ commands:
     usage: /market [search|orders|buyorder|sellorder|myorders|cancelorder|claim]
     aliases: [shop]
   sell:
-    description: Open the bulk server-market selling GUI.
-    usage: /sell
+    description: Open the bulk server-market selling GUI, or quick-sell your hand/an item with an optional custom price.
+    usage: /sell [hand|<item>]
     permission: incogshop.sell
-  sellwand:
-    description: Receive a wand that bulk-sells a chest, barrel, or shulker box's contents.
-    usage: /sellwand
-    permission: incogshop.sellwand
+  stash:
+    description: Open your Incog-Shop overflow stash.
+    usage: /stash
+    permission: incogshop.stash
+  xpvault:
+    description: Store and withdraw experience points.
+    usage: /xpvault [deposit|withdraw] <amount|all>
+    aliases: [xpbank]
+    permission: incogshop.xpvault
   ah:
     description: Browse and manage the Auction House.
     usage: /ah [sell|bid|buy|my|cancel|claim]
@@ -38,7 +43,9 @@ permissions:
     default: true
   incogshop.sell:
     default: true
-  incogshop.sellwand:
+  incogshop.stash:
+    default: true
+  incogshop.xpvault:
     default: true
   incogshop.orders:
     default: true

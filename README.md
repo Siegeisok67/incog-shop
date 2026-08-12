@@ -1,27 +1,23 @@
-# Incog-Shop 1.8.0
+# Incog-Shop 1.5.2
 
-Developer: **SnipeyFresh** (and partially Siegeisok67)
+Developer: **SnipeyFresh**
 
 Incog-Shop is a Purpur/Paper 26.2 economy plugin with a dynamic server market, player physical shops, Vault economy support, an Auction House, bulk selling, and player Buy/Sell Orders.
 
 ## Economy
 By default `economy.mode: VAULT`. Incog-Shop uses the economy provider registered through Vault, so with Vault + ExcellentEconomy all balances are the players' existing ExcellentEconomy balances. No balance copy is required.
 
-Payouts to a third party in someone else's transaction (an Auction House seller, a refunded bidder, a filled market order's counterparty, a player-shop owner) are never lost and never cancel the sale: if the economy provider rejects the deposit (most often because that player is offline and has no account yet), Incog-Shop creates the account and retries, and if it's still rejected, the payout is queued and delivered automatically the next time that player joins.
-
 ## Global market
 - Category -> subcategory -> item layout with centered buttons and search.
-- 750 initial stock bootstrap for every globally tradable material, shared server-wide; buying lowers it for everyone, selling raises it back, and instant-buy/sell price reacts to scarcity.
-- Netherite in every form (scrap, ingot, block, every tool, every armor piece) and every shulker box color can be sold to the market but never bought back, from server stock or from a Buy Order. Ancient Debris remains excluded entirely.
+- 1,000 initial stock bootstrap for every globally tradable material.
+- Netherite items are tradable; Ancient Debris remains excluded.
 - Instant buys remove server stock. Instant sells remove the player's actual items, add server stock, then pay through Vault.
-- `/sell` opens a safe bulk-sell GUI. `/sellwand` gives a wand that does the same thing instantly for a chest, barrel, or shulker box's contents - no GUI needed.
-- Item prices, market modes, and category/subcategory overrides are admin-editable in `shop-items.yml` (separate from `config.yml` and from `market.yml`, which now holds only live stock and demand pressure).
+- `/sell` opens a safe bulk-sell GUI.
 
 ## Market Buy/Sell Orders
 Middle-click any item in `/market` to open its Order Book.
 - Buy Orders escrow the full maximum purchase amount through Vault.
-- Sell Orders escrow the actual plain items from the player's inventory, and the price must fall within a configurable range of the item's base price (`market-orders.sell-price-min/max-multiplier`, default 0.5x-2.0x).
-- Buy Orders cannot be placed on a Sell Only material (netherite, shulker boxes) - the same restriction as the instant market buy.
+- Sell Orders escrow the actual plain items from the player's inventory.
 - Highest Buy Order and lowest Sell Order receive price priority; older orders win ties.
 - Compatible orders match automatically. The resting (older) order sets the execution price.
 - If a Buy Order executes below its maximum price, the difference is refunded.
@@ -38,24 +34,12 @@ Player shops, Auction House prices/bids, admin prices, and market orders accept 
 ## Physical player shops
 The physical chest/barrel inventory is the shop stock. Owners sneak-right-click to open/restock it with exact matching items.
 
-## Sell Wand
-`/sellwand` gives a wand item (needs `incogshop.sellwand`, granted by default). Right-click a chest, trapped chest, barrel, or any shulker box color with it to instantly sell every eligible plain item inside to the server market - the container doesn't open, and the same eligibility rules as `/sell` apply (custom, enchanted, or renamed items are left behind). Configure allowed container types (shulker boxes are always allowed) with `sell-wand.containers` in `config.yml`, or disable the feature with `sell-wand.enabled: false`.
-
-## Transaction log
-Every market buy/sell, sell-order and buy-order creation, and auction bid/listing writes a standardized line to the console and to `transactions.log`:
-```
-[Incog-Shop] =|= 'PlayerName' (uuid) | Sold Diamond x64 for $576.00 at $9.00 per <|> 2026-08-08 14:23:01
-```
-This is separate from the existing tab-separated `audit.log`, which remains the machine-readable record for admin tooling.
-
 ## Build
-Build with Maven (Java 25 toolchain):
+Build with your Java 26 + Gradle setup:
 ```
-mvn clean package
+gradle clean build
 ```
-Output: `target/Incog-Shop-1.8.0.jar`.
-
-Before building, `pom.xml` pins the `paper-api` dependency to `[26.2.build,)`, Maven's version-range equivalent of Gradle's `26.2.build.+` (Maven has no `+` wildcard). This resolves to the latest published 26.2 build automatically. For a reproducible pinned build instead, replace it with a specific version like `26.2.build.112-stable` - check the available builds at https://repo.papermc.io/service/rest/repository/browse/maven-public/io/papermc/paper/paper-api/.
+Output: `build/libs/Incog-Shop-1.5.0.jar`.
 
 
 ## Economy provider selection (1.5.1)
@@ -101,3 +85,54 @@ New permissions:
 - `incogshop.admin.layout`
 - `incogshop.admin.category`
 - `incogshop.admin.item`
+
+
+## 1.7.2 convenience & safety
+
+- `/stash` opens persistent overflow storage.
+- Market search uses a sign editor.
+- `/sell` automatically processes when closed.
+- Auction House Claims is now a GUI.
+- The server market checks every minute for a due 72-hour restock. When due, BUY_SELL items under 100 stock are reset to a random 500-1000 stock.
+
+
+## 1.7.6 GUI market setup
+
+Open `/marketadmin gui` and click **Market Setup**.
+
+From the GUI, admins can:
+- Create custom categories using a sign-name prompt.
+- Create custom subcategories inside those custom categories.
+- Use the held item as the category/subcategory icon.
+- Shift-click a custom category to assign the held market item to it.
+- Click a custom subcategory to assign the held market item directly to it.
+- Add the held vanilla item to the market without typing `/marketadmin additem`.
+- Open the GUI Layout Editor and normal Admin Market from the same setup menu.
+
+Custom categories with one or more custom subcategories automatically show a subcategory-selection GUI to players.
+
+
+## Maven build
+
+This source package now uses Maven. From the project root, run:
+
+```bash
+mvn clean package
+```
+
+The compiled plugin is written to `target/Incog-Shop-1.8.1.jar`. See `MAVEN-BUILD.md` for Arch Linux setup notes.
+
+
+## 1.8.1 GUI redesign
+
+`/marketadmin gui` now opens the **Admin Studio**. It provides centered GUI actions for category management, item organization, adding the held item, opening the admin market, toggling infinite stock, and editing layouts.
+
+Category management controls:
+- **Left-click** a custom category to manage its subcategories.
+- **Shift-click** a custom category to assign the held market item.
+- **Right-click** a custom category to open a safe removal confirmation.
+- Create categories and subcategories with the centered green Create buttons.
+
+The **Item Organizer** displays every market material and its current destination. Left-click an item to move it to a built-in/custom category or subcategory; right-click cycles its Buy/Sell mode.
+
+The Layout Designer now has a **Reset This Layout** button. This is useful after upgrading from an older version if `gui-layout.yml` contains positions from the previous GUI defaults.

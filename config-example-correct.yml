@@ -6,7 +6,7 @@ economy:
 
 market:
   infinite-stock-enabled: false
-  initial-stock: 750
+  initial-stock: 1000
   target-stock: 512
   maximum-stock-per-material: 1000000
   buy-sell-spread: 0.22
@@ -53,15 +53,6 @@ market-orders:
   max-active-orders-per-player: 20
   maximum-items-per-order: 100000
   sales-tax-percent: 1.0
-  sell-price-min-multiplier: 0.5
-  sell-price-max-multiplier: 2.0
-
-sell-wand:
-  enabled: true
-  containers:
-    - CHEST
-    - TRAPPED_CHEST
-    - BARREL
 
 discord-price-check:
   enabled: true

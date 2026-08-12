@@ -9,8 +9,7 @@ import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.inventory.InventoryClickEvent;
-import io.papermc.paper.event.player.AsyncChatEvent;
-import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
+import org.bukkit.event.player.AsyncPlayerChatEvent;
 import org.bukkit.inventory.Inventory;
 
 import java.util.Map;
@@ -99,11 +98,11 @@ public final class OrderGuiListener implements Listener {
     }
 
     @EventHandler
-    public void onChat(AsyncChatEvent event) {
+    public void onChat(AsyncPlayerChatEvent event) {
         Prompt prompt = prompts.remove(event.getPlayer().getUniqueId());
         if (prompt == null) return;
         event.setCancelled(true);
-        String input = PlainTextComponentSerializer.plainText().serialize(event.message()).trim();
+        String input = event.getMessage().trim();
         plugin.getServer().getScheduler().runTask(plugin, () -> handle(event.getPlayer(), prompt, input));
     }
 

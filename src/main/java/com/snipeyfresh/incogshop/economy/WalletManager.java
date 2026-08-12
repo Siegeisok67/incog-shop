@@ -19,12 +19,6 @@ public final class WalletManager {
     private final File file;
     private final Map<UUID, Double> balances = new HashMap<>();
     private final Map<UUID, String> names = new HashMap<>();
-    // Money owed to a third party (a sale's seller/owner, a shop owner, a refunded bidder, etc.)
-    // that the economy provider rejected at the time of the transaction - almost always because
-    // that player has never had a Vault account created on this economy plugin, or the account
-    // lookup failed while they were offline. Queued here and delivered the next time they join,
-    // instead of the whole trade being cancelled or the money being silently lost.
-    private final Map<UUID, Double> pendingPayouts = new HashMap<>();
     private Economy vault;
     private boolean usingVault;
 
@@ -35,7 +29,7 @@ public final class WalletManager {
 
     public void load() {
         setupProvider();
-        balances.clear(); names.clear(); pendingPayouts.clear();
+        balances.clear(); names.clear();
         YamlConfiguration yml = YamlConfiguration.loadConfiguration(file);
         var section = yml.getConfigurationSection("wallets");
         if (section != null) {
@@ -44,16 +38,6 @@ public final class WalletManager {
                     UUID id = UUID.fromString(key);
                     balances.put(id, Math.max(0, section.getDouble(key + ".balance", 0)));
                     names.put(id, section.getString(key + ".name", "Unknown"));
-                } catch (IllegalArgumentException ignored) {}
-            }
-        }
-        var pendingSection = yml.getConfigurationSection("pending-payouts");
-        if (pendingSection != null) {
-            for (String key : pendingSection.getKeys(false)) {
-                try {
-                    UUID id = UUID.fromString(key);
-                    double amount = pendingSection.getDouble(key, 0);
-                    if (amount > 0) pendingPayouts.put(id, amount);
                 } catch (IllegalArgumentException ignored) {}
             }
         }
@@ -105,9 +89,6 @@ public final class WalletManager {
             yml.set(root + ".balance", round(e.getValue()));
             yml.set(root + ".name", names.getOrDefault(e.getKey(), "Unknown"));
         }
-        for (var e : pendingPayouts.entrySet()) {
-            if (e.getValue() > 0) yml.set("pending-payouts." + e.getKey(), round(e.getValue()));
-        }
         try { yml.save(file); }
         catch (IOException ex) { plugin.getLogger().severe("Could not save wallets.yml: " + ex.getMessage()); }
     }
@@ -137,7 +118,6 @@ public final class WalletManager {
         amount = Math.max(0, round(amount));
         if (amount <= 0) return true;
         if (!usingVault) { balances.put(id, round(get(id) + amount)); return true; }
-        ensureAccount(id);
         return transaction(vault.depositPlayer(offline(id), amount));
     }
 
@@ -145,55 +125,7 @@ public final class WalletManager {
         amount = Math.max(0, round(amount));
         if (get(id) + 1e-9 < amount) return false;
         if (!usingVault) { balances.put(id, round(get(id) - amount)); return true; }
-        ensureAccount(id);
         return transaction(vault.withdrawPlayer(offline(id), amount));
-    }
-
-    /**
-     * Same as {@link #deposit(UUID, double)}, but for paying a third party in someone else's
-     * transaction (an auction seller, a bid refund, a player-shop owner, a filled market order)
-     * rather than the player actively running the command. Those recipients are very often
-     * offline, and some Vault-linked economy plugins reject a deposit to a player they have never
-     * seen create an account. Rather than aborting the whole trade (or, worse, silently dropping
-     * the money), the amount is queued here and delivered automatically the next time that player
-     * joins. Always returns true: the trade should proceed either way.
-     */
-    public boolean depositOrQueue(UUID id, double amount) {
-        amount = Math.max(0, round(amount));
-        if (amount <= 0) return true;
-        if (deposit(id, amount)) return true;
-        pendingPayouts.merge(id, amount, Double::sum);
-        save();
-        plugin.getLogger().warning("A payout of " + plugin.money(amount) + " to " + id
-                + " was rejected by the economy provider (likely no account yet for an offline player)."
-                + " It has been queued and will be paid out automatically the next time they join.");
-        return true;
-    }
-
-    public double pendingPayout(UUID id) { return pendingPayouts.getOrDefault(id, 0.0); }
-
-    /** Call when a player joins to deliver any payout that was queued by {@link #depositOrQueue}. */
-    public void flushPending(org.bukkit.entity.Player player) {
-        UUID id = player.getUniqueId();
-        Double amount = pendingPayouts.get(id);
-        if (amount == null || amount <= 0) return;
-        if (deposit(id, amount)) {
-            pendingPayouts.remove(id);
-            save();
-            player.sendMessage(com.snipeyfresh.incogshop.util.Text.color(
-                    "&a[Incog-Shop] &fA delayed payout of &e" + plugin.money(amount) + "&f from a past sale has been added to your balance."));
-        }
-    }
-
-    /** Makes sure the Vault-linked economy plugin actually has an account for this player before we pay them. */
-    private void ensureAccount(UUID id) {
-        if (!usingVault) return;
-        OfflinePlayer player = offline(id);
-        try {
-            if (!vault.hasAccount(player)) vault.createPlayerAccount(player);
-        } catch (Exception ex) {
-            plugin.getLogger().warning("Could not verify/create the economy account for " + id + ": " + ex.getMessage());
-        }
     }
 
     private static boolean transaction(EconomyResponse response) { return response != null && response.transactionSuccess(); }

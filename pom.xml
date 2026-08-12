@@ -1,22 +1,23 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>com.snipeyfresh</groupId>
-    <artifactId>Incog-Shop</artifactId>
-    <version>1.8.0</version>
+    <artifactId>incog-shop</artifactId>
+    <version>1.8.4</version>
     <packaging>jar</packaging>
 
     <name>Incog-Shop</name>
+    <description>Dynamic player-supplied market with orders, physical shops, Auction House, stash, XP vault, and Discord price history.</description>
 
     <properties>
-        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <!-- Matches the previous Gradle build's toolchain/release settings. -->
-        <maven.compiler.source>25</maven.compiler.source>
-        <maven.compiler.target>25</maven.compiler.target>
         <maven.compiler.release>25</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <paper.version>[26.2.build,)</paper.version>
+        <vaultapi.version>1.7.1</vaultapi.version>
+        <discordsrv.version>1.30.5</discordsrv.version>
     </properties>
 
     <repositories>
@@ -25,46 +26,82 @@
             <url>https://repo.papermc.io/repository/maven-public/</url>
         </repository>
         <repository>
-            <id>jitpack.io</id>
+            <id>jitpack</id>
             <url>https://jitpack.io</url>
         </repository>
         <repository>
-            <id>scarsz-nexus</id>
+            <id>scarsz</id>
             <url>https://nexus.scarsz.me/content/groups/public/</url>
         </repository>
     </repositories>
 
     <dependencies>
-        <!--
-          Paper's Gradle dependency uses a "+" wildcard for "latest build" (26.2.build.+), which
-          Maven doesn't support. Per Paper's own docs, the Maven equivalent is a version range:
-          [26.2.build,) resolves to the latest published build of 26.2. For a reproducible build
-          pinned to one specific build, use the form 26.2.build.<N>-stable (or -alpha/-beta),
-          e.g. 26.2.build.112-stable - check https://repo.papermc.io/service/rest/repository/browse/maven-public/io/papermc/paper/paper-api/
-          for the latest available build number.
-        -->
         <dependency>
             <groupId>io.papermc.paper</groupId>
             <artifactId>paper-api</artifactId>
-            <version>[26.2.build,)</version>
+            <version>${paper.version}</version>
             <scope>provided</scope>
         </dependency>
+
+        <!-- The crash in your logs (IncompatibleClassChangeError: Found interface org.bukkit.World, but
+             class was expected) means something on the COMPILE classpath declared org.bukkit.World as a
+             class instead of Paper's real interface, and ShopManager was compiled against that instead.
+             VaultAPI's own pom pulls in org.bukkit:bukkit:1.13.1-R0.1-SNAPSHOT (an old pre-Paper-split
+             Bukkit API jar) as a transitive dependency, so it's the prime suspect - excluded below.
+             DiscordSRV's published artifacts have historically bundled/required their own old
+             org.bukkit:bukkit / org.spigotmc:spigot-api artifacts too, so the same exclusions are applied
+             there as a precaution. -->
         <dependency>
             <groupId>com.github.MilkBowl</groupId>
             <artifactId>VaultAPI</artifactId>
-            <version>1.7.1</version>
+            <version>${vaultapi.version}</version>
             <scope>provided</scope>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.bukkit</groupId>
+                    <artifactId>bukkit</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.bukkit</groupId>
+                    <artifactId>craftbukkit</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.spigotmc</groupId>
+                    <artifactId>spigot-api</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
+
         <dependency>
             <groupId>com.discordsrv</groupId>
             <artifactId>discordsrv</artifactId>
-            <version>1.30.5</version>
+            <version>${discordsrv.version}</version>
             <scope>provided</scope>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.bukkit</groupId>
+                    <artifactId>bukkit</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.bukkit</groupId>
+                    <artifactId>craftbukkit</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.spigotmc</groupId>
+                    <artifactId>spigot-api</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
     </dependencies>
 
     <build>
-        <finalName>${project.artifactId}-${project.version}</finalName>
+        <finalName>Incog-Shop-${project.version}</finalName>
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>false</filtering>
+            </resource>
+        </resources>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -74,19 +111,6 @@
                     <release>${maven.compiler.release}</release>
                     <encoding>${project.build.sourceEncoding}</encoding>
                 </configuration>
-            </plugin>
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-resources-plugin</artifactId>
-                <version>3.3.1</version>
-                <configuration>
-                    <encoding>${project.build.sourceEncoding}</encoding>
-                </configuration>
-            </plugin>
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-jar-plugin</artifactId>
-                <version>3.4.1</version>
             </plugin>
         </plugins>
     </build>

@@ -12,6 +12,5 @@ public final class PlayerListener implements Listener {
     @EventHandler
     public void onJoin(PlayerJoinEvent event) {
         plugin.wallets().touch(event.getPlayer().getUniqueId(), event.getPlayer().getName());
-        plugin.wallets().flushPending(event.getPlayer());
     }
 }

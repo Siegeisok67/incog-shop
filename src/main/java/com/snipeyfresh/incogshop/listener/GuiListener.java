@@ -7,13 +7,17 @@ import com.snipeyfresh.incogshop.gui.ShopGui;
 import com.snipeyfresh.incogshop.market.MarketEntry;
 import com.snipeyfresh.incogshop.shop.PlayerShop;
 import org.bukkit.Material;
+import org.bukkit.Location;
+import org.bukkit.block.sign.Side;
+import io.papermc.paper.math.BlockPosition;
+import io.papermc.paper.math.Position;
+import io.papermc.paper.event.packet.UncheckedSignChangeEvent;
+import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.inventory.ClickType;
 import org.bukkit.event.inventory.InventoryClickEvent;
-import io.papermc.paper.event.player.AsyncChatEvent;
-import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import org.bukkit.inventory.Inventory;
 
 import java.util.Arrays;
@@ -26,6 +30,8 @@ public final class GuiListener implements Listener {
     private record SearchContext(boolean admin, MarketCategory category, MarketSubcategory subcategory) {}
     private final IncogShopPlugin plugin;
     private final Map<UUID, SearchContext> searches = new ConcurrentHashMap<>();
+    private final Map<UUID, SearchSign> searchSigns = new ConcurrentHashMap<>();
+    private record SearchSign(Location location, BlockPosition position) {}
 
     public GuiListener(IncogShopPlugin plugin) { this.plugin = plugin; }
 
@@ -39,35 +45,30 @@ public final class GuiListener implements Listener {
             int slot = event.getRawSlot();
             if (slot < 0 || slot >= top.getSize()) return;
 
-            int searchSlot = plugin.layouts().slot("categories", "search", 40);
-            int ordersSlot = plugin.layouts().slot("categories", "orders", 41);
+            int searchSlot = plugin.layouts().slot("categories", "search", 46);
+            int ordersSlot = plugin.layouts().slot("categories", "orders", 48);
             if (slot == searchSlot) { beginSearch(player, holder.admin(), MarketCategory.ALL, null); return; }
             if (!holder.admin() && slot == ordersSlot) { plugin.orderGui().openGlobal(player, "ALL", 0); return; }
-            if (holder.admin() && slot == 50) {
+            if (holder.admin() && slot == ordersSlot) {
+                if (!player.hasPermission("incogshop.admin.gui")) return;
+                plugin.adminSetupGui().open(player);
+                return;
+            }
+            if (holder.admin() && slot == plugin.layouts().slot("categories", "balance", 50)) {
                 if (!player.hasPermission("incogshop.admin.stock")) return;
                 toggleInfiniteStock(player);
                 plugin.gui().openCategories(player, true);
                 return;
             }
-            if (holder.admin() && slot == 51) {
+            if (holder.admin() && slot == plugin.layouts().slot("categories", "help", 52)) {
                 if (!player.hasPermission("incogshop.admin.layout")) return;
-                plugin.layoutEditor().open(player, null);
-                return;
-            }
-            if (holder.admin() && slot == 52) {
-                player.closeInventory();
-                player.sendMessage(plugin.prefix()+"§dCustom categories: §f/marketadmin createcategory <id> <icon> <display name>");
-                player.sendMessage("§7Assign items with §f/marketadmin setcategory <material> <id|auto>§7.");
-                return;
-            }
-            if (holder.admin() && slot == 53) {
-                player.closeInventory();
-                player.sendMessage(plugin.prefix()+"§dAdd/configure: §f/marketadmin additem <material> <price> [buy_sell|sell_only|disabled]");
+                plugin.layoutEditor().open(player, "menu", null);
                 return;
             }
 
             MarketCategory[] cats = MarketCategory.values();
-            int[] defaults = ShopGui.centeredSlots(cats.length);
+            int total = cats.length + plugin.customCategories().all().size();
+            int[] defaults = ShopGui.centeredSlots(total);
             for (int i = 0; i < cats.length; i++) {
                 int fallback = i < defaults.length ? defaults[i] : 10 + i;
                 int categorySlot = plugin.layouts().slot("categories", "builtin:" + cats[i].name(), fallback);
@@ -81,7 +82,9 @@ public final class GuiListener implements Listener {
 
             int customIndex = 0;
             for (var category : plugin.customCategories().all()) {
-                int categorySlot = plugin.layouts().slot("categories", "custom:" + category.id(), 10 + (customIndex++ % 27));
+                int logical = cats.length + customIndex++;
+                int fallback = logical < defaults.length ? defaults[logical] : 10 + logical;
+                int categorySlot = plugin.layouts().slot("categories", "custom:" + category.id(), fallback);
                 if (slot == categorySlot) {
                     plugin.gui().openCustomCategory(player, category.id(), 0, holder.admin());
                     return;
@@ -94,8 +97,8 @@ public final class GuiListener implements Listener {
             event.setCancelled(true);
             int slot = event.getRawSlot();
             if (slot < 0 || slot >= top.getSize()) return;
-            if (slot == plugin.layouts().slot("subcategories","all",39)) { plugin.gui().openMarket(player, 0, holder.admin(), holder.category(), null, ""); return; }
-            if (slot == plugin.layouts().slot("subcategories","search",40)) { beginSearch(player, holder.admin(), holder.category(), null); return; }
+            if (slot == plugin.layouts().slot("subcategories","all",47)) { plugin.gui().openMarket(player, 0, holder.admin(), holder.category(), null, ""); return; }
+            if (slot == plugin.layouts().slot("subcategories","search",49)) { beginSearch(player, holder.admin(), holder.category(), null); return; }
             if (slot == plugin.layouts().slot("subcategories","back",45)) { plugin.gui().openCategories(player, holder.admin()); return; }
             if (holder.admin() && slot == 50) {
                 if (!player.hasPermission("incogshop.admin.stock")) return;
@@ -120,6 +123,7 @@ public final class GuiListener implements Listener {
             int slot = event.getRawSlot();
             if (slot < 0 || slot >= top.getSize()) return;
             if (slot == 40) {
+                plugin.customCategories().clearAssignment(holder.material());
                 plugin.market().clearClassificationOverride(holder.material(), player.getName());
                 player.sendMessage(plugin.prefix() + "§aReset §f" + holder.material().name() + " §ato automatic market placement.");
                 plugin.gui().openPlacementCategories(player, holder.material());
@@ -148,6 +152,7 @@ public final class GuiListener implements Listener {
             for (int i = 0; i < subcategorySlots.length && i < subs.size(); i++) {
                 if (slot == subcategorySlots[i]) {
                     MarketSubcategory sub = subs.get(i);
+                    plugin.customCategories().clearAssignment(holder.material());
                     if (plugin.market().setClassification(holder.material(), holder.category(), sub, player.getName())) {
                         player.sendMessage(plugin.prefix() + "§aMoved §f" + holder.material().name() + " §ato §f" + holder.category().display() + " §7→ §f" + sub.display() + "§a.");
                         plugin.gui().openMarket(player, 0, true, holder.category(), sub, "");
@@ -158,16 +163,36 @@ public final class GuiListener implements Listener {
             return;
         }
 
+        if (top.getHolder() instanceof ShopGui.CustomSubcategoryHolder holder) {
+            event.setCancelled(true);
+            int slot=event.getRawSlot();
+            if(slot<0||slot>=top.getSize())return;
+            if(slot==39){plugin.gui().openCustomMarket(player,holder.categoryId(),"",0,holder.admin());return;}
+            if(slot==45){plugin.gui().openCategories(player,holder.admin());return;}
+            var subs=plugin.customCategories().subcategories(holder.categoryId());
+            int[] slots=ShopGui.centeredSlots(subs.size());
+            for(int i=0;i<subs.size()&&i<slots.length;i++)if(slot==slots[i]){
+                plugin.gui().openCustomMarket(player,holder.categoryId(),subs.get(i).id(),0,holder.admin());return;
+            }
+            return;
+        }
+
         if (top.getHolder() instanceof ShopGui.CustomMarketHolder holder) {
             event.setCancelled(true);
             int slot = event.getRawSlot();
             if (slot < 0 || slot >= top.getSize()) return;
-            if (slot == 45) { if (holder.page() > 0) plugin.gui().openCustomCategory(player, holder.categoryId(), holder.page()-1, holder.admin()); return; }
-            if (slot == 46) { plugin.gui().openCategories(player, holder.admin()); return; }
-            if (slot == 53) { plugin.gui().openCustomCategory(player, holder.categoryId(), holder.page()+1, holder.admin()); return; }
+            if (slot == 45) { if (holder.page() > 0) plugin.gui().openCustomMarket(player, holder.categoryId(), holder.subcategoryId(), holder.page()-1, holder.admin()); return; }
+            if (slot == 46) {
+                if (!holder.subcategoryId().isBlank()) plugin.gui().openCustomSubcategories(player, holder.categoryId(), holder.admin());
+                else plugin.gui().openCategories(player, holder.admin());
+                return;
+            }
+            if (slot == 53) { plugin.gui().openCustomMarket(player, holder.categoryId(), holder.subcategoryId(), holder.page()+1, holder.admin()); return; }
             if (slot >= ShopGui.ITEMS_PER_PAGE) return;
 
-            var materials = plugin.customCategories().materials(holder.categoryId()).stream()
+            var materials = (holder.subcategoryId().isBlank()
+                    ? plugin.customCategories().materials(holder.categoryId())
+                    : plugin.customCategories().materials(holder.categoryId(), holder.subcategoryId())).stream()
                     .filter(m -> holder.admin() || plugin.market().isMarketEnabled(m)).toList();
             int index = holder.page() * ShopGui.ITEMS_PER_PAGE + slot;
             if (index < 0 || index >= materials.size()) return;
@@ -184,7 +209,7 @@ public final class GuiListener implements Listener {
                 else if (event.getClick() == ClickType.SHIFT_LEFT) plugin.market().setBasePrice(material, plugin.market().entry(material).basePrice()*1.10, player.getName());
                 else if (event.getClick() == ClickType.SHIFT_RIGHT) plugin.market().setBasePrice(material, plugin.market().entry(material).basePrice()*0.90, player.getName());
                 else return;
-                plugin.gui().openCustomCategory(player, holder.categoryId(), holder.page(), true);
+                plugin.gui().openCustomMarket(player, holder.categoryId(), holder.subcategoryId(), holder.page(), true);
                 return;
             }
 
@@ -193,7 +218,7 @@ public final class GuiListener implements Listener {
             var result = event.isLeftClick() ? plugin.market().buy(player,material,amount) : event.isRightClick() ? plugin.market().sell(player,material,amount) : null;
             if (result != null) {
                 player.sendMessage(plugin.prefix()+(result.success()?"§a":"§c")+result.message()+(result.total()>0?" §7("+plugin.money(result.total())+")":""));
-                plugin.gui().openCustomCategory(player, holder.categoryId(), holder.page(), false);
+                plugin.gui().openCustomMarket(player, holder.categoryId(), holder.subcategoryId(), holder.page(), false);
             }
             return;
         }
@@ -202,31 +227,34 @@ public final class GuiListener implements Listener {
             event.setCancelled(true);
             int slot = event.getRawSlot();
             if (slot < 0 || slot >= top.getSize()) return;
-            if (slot == plugin.layouts().slot("items","previous",45)) {
+            if (slot == plugin.gui().itemControlSlots().get("previous")) {
                 if (holder.page() > 0) plugin.gui().openMarket(player, holder.page() - 1, holder.admin(), holder.category(), holder.subcategory(), holder.query());
                 return;
             }
-            if (slot == plugin.layouts().slot("items","back",46)) {
-                if (holder.subcategory() != null && holder.category() != MarketCategory.ALL) plugin.gui().openSubcategories(player, holder.admin(), holder.category());
-                else plugin.gui().openCategories(player, holder.admin());
+            if (slot == plugin.gui().itemControlSlots().get("back")) {
+                if (holder.category() != MarketCategory.ALL) {
+                    plugin.gui().openSubcategories(player, holder.admin(), holder.category());
+                } else {
+                    plugin.gui().openCategories(player, holder.admin());
+                }
                 return;
             }
-            if (slot == plugin.layouts().slot("items","search",47)) { beginSearch(player, holder.admin(), holder.category(), holder.subcategory()); return; }
-            if (slot == plugin.layouts().slot("items","clear",48) && holder.query() != null && !holder.query().isBlank()) {
+            if (slot == plugin.gui().itemControlSlots().get("search")) { beginSearch(player, holder.admin(), holder.category(), holder.subcategory()); return; }
+            if (slot == plugin.gui().itemControlSlots().get("clear") && holder.query() != null && !holder.query().isBlank()) {
                 plugin.gui().openMarket(player, 0, holder.admin(), holder.category(), holder.subcategory(), "");
                 return;
             }
-            if (!holder.admin() && slot == plugin.layouts().slot("items","orders",50)) {
+            if (!holder.admin() && slot == plugin.gui().itemControlSlots().get("orders")) {
                 plugin.orderGui().openGlobal(player, "ALL", 0);
                 return;
             }
-            if (holder.admin() && slot == plugin.layouts().slot("items","orders",50)) {
+            if (holder.admin() && slot == plugin.gui().itemControlSlots().get("orders")) {
                 if (!player.hasPermission("incogshop.admin.stock")) return;
                 toggleInfiniteStock(player);
                 plugin.gui().openMarket(player, holder.page(), true, holder.category(), holder.subcategory(), holder.query());
                 return;
             }
-            if (slot == plugin.layouts().slot("items","next",53)) {
+            if (slot == plugin.gui().itemControlSlots().get("next")) {
                 plugin.gui().openMarket(player, holder.page() + 1, holder.admin(), holder.category(), holder.subcategory(), holder.query());
                 return;
             }
@@ -304,29 +332,58 @@ public final class GuiListener implements Listener {
     private void beginSearch(Player player, boolean admin, MarketCategory category, MarketSubcategory subcategory) {
         searches.put(player.getUniqueId(), new SearchContext(admin, category, subcategory));
         player.closeInventory();
-        String where = subcategory != null ? subcategory.display() : category == MarketCategory.ALL ? "the market" : category.display();
-        player.sendMessage(plugin.prefix() + "§bType an item name in chat to search §f" + where + "§b. §7Type §fcancel §7to stop.");
+
+        Location location = player.getLocation().getBlock().getLocation().add(0, 2, 0);
+        BlockPosition position = Position.block(location);
+        searchSigns.put(player.getUniqueId(), new SearchSign(location, position));
+
+        player.sendBlockChange(location, Material.OAK_SIGN.createBlockData());
+        player.sendSignChange(location, new String[]{"Search item", "", "", ""});
+        player.openVirtualSign(position, Side.FRONT);
+        player.sendMessage(plugin.prefix() + "§bType your market search on the sign and click Done.");
     }
 
     @EventHandler
-    public void onSearchChat(AsyncChatEvent event) {
-        SearchContext context = searches.remove(event.getPlayer().getUniqueId());
-        if (context == null) return;
+    public void onVirtualSignSearch(UncheckedSignChangeEvent event) {
+        Player player = event.getPlayer();
+        SearchContext context = searches.remove(player.getUniqueId());
+        SearchSign sign = searchSigns.remove(player.getUniqueId());
+        if (context == null || sign == null) return;
+
+        BlockPosition edited = event.getEditedBlockPosition();
+        if (edited.blockX() != sign.position().blockX()
+                || edited.blockY() != sign.position().blockY()
+                || edited.blockZ() != sign.position().blockZ()) {
+            searches.put(player.getUniqueId(), context);
+            searchSigns.put(player.getUniqueId(), sign);
+            return;
+        }
+
         event.setCancelled(true);
-        String rawQuery = PlainTextComponentSerializer.plainText().serialize(event.message()).trim();
-        final String query = rawQuery.length() > 40 ? rawQuery.substring(0, 40) : rawQuery;
+        player.sendBlockChange(sign.location(), sign.location().getBlock().getBlockData());
+
+        StringBuilder joined = new StringBuilder();
+        for (var component : event.lines()) {
+            String line = PlainTextComponentSerializer.plainText().serialize(component).trim();
+            if (!line.isBlank()) {
+                if (!joined.isEmpty()) joined.append(' ');
+                joined.append(line);
+            }
+        }
+        String query = joined.toString().trim();
+        if (query.length() > 40) query = query.substring(0, 40);
+        final String finalQuery = query;
+
         plugin.getServer().getScheduler().runTask(plugin, () -> {
-            Player player = event.getPlayer();
             if (!player.isOnline()) return;
-            if (query.equalsIgnoreCase("cancel")) {
+            if (finalQuery.isBlank() || finalQuery.equalsIgnoreCase("cancel")) {
                 if (context.subcategory() != null) plugin.gui().openMarket(player, 0, context.admin(), context.category(), context.subcategory(), "");
                 else if (context.category() != MarketCategory.ALL) plugin.gui().openSubcategories(player, context.admin(), context.category());
                 else plugin.gui().openCategories(player, context.admin());
                 return;
             }
-            List<Material> matches = plugin.gui().filtered(context.category(), context.subcategory(), query, context.admin());
-            if (matches.isEmpty()) player.sendMessage(plugin.prefix() + "§cNo market items matched §f" + query + "§c.");
-            plugin.gui().openMarket(player, 0, context.admin(), context.category(), context.subcategory(), query);
+            plugin.gui().openMarket(player, 0, context.admin(), context.category(), context.subcategory(), finalQuery);
         });
     }
+
 }

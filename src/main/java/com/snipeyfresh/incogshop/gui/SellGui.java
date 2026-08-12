@@ -20,7 +20,13 @@ public final class SellGui {
     public SellGui(IncogShopPlugin plugin) { this.plugin = plugin; }
 
     public static final class Holder implements InventoryHolder {
+        private boolean processed;
+        private boolean cancelled;
         @Override public Inventory getInventory() { return null; }
+        public boolean processed() { return processed; }
+        public boolean cancelled() { return cancelled; }
+        public void setProcessed(boolean value) { processed = value; }
+        public void setCancelled(boolean value) { cancelled = value; }
     }
 
     public void open(Player player) {
@@ -28,8 +34,8 @@ public final class SellGui {
         ItemStack filler = ShopGui.named(Material.BLACK_STAINED_GLASS_PANE, " ", List.of());
         for (int i = 45; i < 54; i++) inv.setItem(i, filler);
         inv.setItem(CANCEL_SLOT, ShopGui.named(Material.BARRIER, "&cCancel", List.of("&7Return every item without selling.")));
-        inv.setItem(47, ShopGui.named(Material.BOOK, "&eHow This Works", List.of("&7Place plain market items in the", "&7top 5 rows, then confirm.", "", "&7Custom/enchanted items are returned.", "&7Use &f/ah &7for those instead.")));
-        inv.setItem(CONFIRM_SLOT, ShopGui.named(Material.EMERALD_BLOCK, "&aSell Eligible Items", List.of("&7The server adds sold items to stock", "&7and pays your Vault balance.", "", "&eClick to confirm")));
+        inv.setItem(47, ShopGui.named(Material.BOOK, "&eHow This Works", List.of("&7Place eligible market items in the", "&7top 5 rows.", "", "&aClosing the menu sells everything.", "&aYou can also click Sell Now.", "", "&7Ineligible items are returned/stashed.")));
+        inv.setItem(CONFIRM_SLOT, ShopGui.named(Material.EMERALD_BLOCK, "&aSell Eligible Items", List.of("&7The server adds sold items to stock", "&7and pays your Vault balance.", "", "&eClick to sell now", "&7Closing the menu does the same thing.")));
         inv.setItem(51, ShopGui.named(Material.GOLD_INGOT, "&6Balance: &f" + plugin.money(plugin.wallets().get(player.getUniqueId())), List.of("&7Economy: &f" + plugin.wallets().providerName())));
         player.openInventory(inv);
     }
