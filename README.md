@@ -1,6 +1,6 @@
 # Incog-Shop 1.5.2
 
-Developer: **SnipeyFresh**
+Developer: **SnipeyFresh** (and partially Siegeisok67)
 
 Incog-Shop is a Purpur/Paper 26.2 economy plugin with a dynamic server market, player physical shops, Vault economy support, an Auction House, bulk selling, and player Buy/Sell Orders.
 
