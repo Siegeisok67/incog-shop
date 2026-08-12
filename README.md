@@ -10,7 +10,7 @@ By default `economy.mode: VAULT`. Incog-Shop uses the economy provider registere
 ## Global market
 - Category -> subcategory -> item layout with centered buttons and search.
 - 1,000 initial stock bootstrap for every globally tradable material.
-- Netherite items are tradable; Ancient Debris remains excluded.
+- Netherite items are sell only; Ancient Debris remains excluded.
 - Instant buys remove server stock. Instant sells remove the player's actual items, add server stock, then pay through Vault.
 - `/sell` opens a safe bulk-sell GUI.
 
